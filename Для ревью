@@ -1,0 +1,10 @@
+
+Создание суперюзера сервиса auth-service
+sudo docker compose exec auth-service python manage.py create-superadmin
+
+Тесты
+cd Auth_rep/etl/tests/auth_functional
+sudo docker compose --env-file ../../.env -f docker-compose.auth.yml up --build --abort-on-container-exit tests
+Сброс тестов
+sudo docker compose -f docker-compose.auth.yml down -v
+build --no-cache

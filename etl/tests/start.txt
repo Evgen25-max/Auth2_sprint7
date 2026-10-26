@@ -1,0 +1,7 @@
+cd etl/tests/functional
+sudo docker compose --env-file ../../.env up --build --abort-on-container-exit tests
+
+cd ~/DEV/YNDX/sprint_6/new/Auth_rep/etl/tests/auth_functional
+
+sudo docker compose --env-file ../../.env -f docker-compose.auth.yml up --build --abort-on-container-exit tests
+
