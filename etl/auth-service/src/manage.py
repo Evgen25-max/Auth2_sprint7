@@ -1,4 +1,4 @@
-"""Консольные утилиты для управления сервисом аутентификации."""
+
 import asyncio
 import re
 import sys
@@ -51,38 +51,44 @@ def create_superadmin(
     _validate_password(password)
 
     async def _create() -> tuple[bool, bool]:
-        async with async_session() as session:
-            stmt = select(User).where(User.login == login)
-            result = await session.execute(stmt)
-            if result.scalars().first():
-                return False, False
 
-            role_result = await session.execute(
-                select(Role).where(Role.name == 'admin')
-            )
-            admin_role = role_result.scalars().first()
-            roles_to_assign = [admin_role] if admin_role else []
+        try:
+            async with async_session() as session:
+                # Проверяем, что пользователь ещё не существует
+                stmt = select(User).where(User.login == login)
+                result = await session.execute(stmt)
+                if result.scalars().first():
+                    return False, False
 
-            user = User(
-                login=login,
-                hashed_password=hash_password(password),
-                first_name=first_name,
-                last_name=last_name,
-                is_superuser=True,
-                roles=roles_to_assign,
-            )
-            session.add(user)
-            await session.commit()
+                # Получаем роль admin
+                role_result = await session.execute(
+                    select(Role).where(Role.name == 'admin')
+                )
+                admin_role = role_result.scalars().first()
+                roles_to_assign = [admin_role] if admin_role else []
 
-            return True, admin_role is not None
+                hashed_pw = await hash_password(password)
+
+                user = User(
+                    login=login,
+                    hashed_password=hashed_pw,  # ← str, не coroutine
+                    first_name=first_name,
+                    last_name=last_name,
+                    is_superuser=True,
+                    roles=roles_to_assign,
+                )
+                session.add(user)
+                await session.commit()
+
+                return True, admin_role is not None
+        finally:
+            await engine.dispose()
 
     try:
         created, role_found = asyncio.run(_create())
     except Exception as e:
         typer.secho(f'Ошибка при создании: {e}', fg='red')
         sys.exit(1)
-    finally:
-        asyncio.run(engine.dispose())
 
     if not created:
         typer.secho(f'Ошибка: Пользователь {login} уже существует!', fg='red')

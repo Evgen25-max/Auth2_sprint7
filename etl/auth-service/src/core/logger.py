@@ -1,9 +1,18 @@
-
 import os
+from pathlib import Path
+
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+LOG_DIR = BASE_DIR / 'logs'
+
+
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 LOG_DEFAULT_HANDLERS = ['console', 'file']
-LOG_FILE = os.getenv('LOG_FILE', 'logs/auth.log')
+
+
+LOG_FILE = str(LOG_DIR / 'auth.log')
 
 LOGGING = {
     'version': 1,

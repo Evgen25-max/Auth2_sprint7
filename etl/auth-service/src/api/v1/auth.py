@@ -1,10 +1,12 @@
+
 from fastapi import APIRouter, Depends, Request, status
+
+from api.deps import get_current_user, get_token_payload
+from core.http import trusted_client_ip
 from models.auth_models import User
 from models.token import RefreshRequest, TokenPair
 from models.users import UserCreate, UserLogin, UserPublic
 from services.auth import AuthService, get_auth_service
-
-from api.deps import get_current_user, get_token_payload
 
 router = APIRouter(prefix='/auth', tags=['Authentication'])
 
@@ -24,6 +26,24 @@ async def signup(
 
 
 @router.post(
+    '/validate',
+    summary='Валидация токена (для интеграции с другими сервисами)',
+)
+async def validate_token(
+    payload: dict = Depends(get_token_payload),
+):
+    """
+    Возвращает payload токена, если он валиден.
+    """
+    return {
+        'valid': True,
+        'user_id': payload.get('sub'),
+        'is_superuser': payload.get('is_superuser'),
+        'type': payload.get('type'),
+    }
+
+
+@router.post(
     '/login',
     response_model=TokenPair,
     summary='Вход в систему',
@@ -34,7 +54,7 @@ async def login(
     service: AuthService = Depends(get_auth_service),
 ) -> TokenPair:
     """Выдает пару JWT токенов при успешном логине."""
-    ip = request.client.host if request.client else None
+    ip = trusted_client_ip(request)
     ua = request.headers.get('User-Agent')
     return await service.login(data, ip=ip, ua=ua)
 

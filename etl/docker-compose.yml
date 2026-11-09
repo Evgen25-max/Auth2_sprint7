@@ -4,28 +4,16 @@ services:
     image: jaegertracing/all-in-one:latest
     container_name: jaeger-tracing
     ports:
-      # Порт веб-интерфейса Jaeger UI
       - "16686:16686"
-
-      # Порт для приема трассировок по протоколу Thrift over UDP (стандарт для старых агентов)
       - "6831:6831/udp"
-
-      # Дополнительно: Порт для приема трассировок по HTTP (Thrift)
       - "14268:14268"
-
-      # Дополнительно: Порт для приема данных через OTLP/gRPC (рекомендуется для современных версий OTel)
       - "4317:4317"
-
-      # Дополнительно: Порт для приема данных через OTLP/HTTP
       - "4318:4318"
-
     environment:
-      # Позволяет собирать трассировки из других сетей, если нужно
       - COLLECTOR_OTLP_ENABLED=true
     networks:
       - default
     restart: unless-stopped
-
 
   service:
     build: app
@@ -120,10 +108,11 @@ services:
       - default
       - elastic
     restart: unless-stopped
-
   fastapi:
     build: ./fastapi
     image: fastapi-image
+    expose:
+      - "8002"
     env_file:
       - ./.env
     volumes:
@@ -138,17 +127,67 @@ services:
       - elastic
     restart: always
 
-  auth-service:
+  auth-redis:
+    image: redis:7.2-alpine
+    command:
+      - redis-server
+      - --port
+      - "6380"
+      - --requirepass
+      - ${REDIS_AUTH_PASSW}
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - auth_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "-a", "${REDIS_AUTH_PASSW}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - default
+    restart: always
+
+  auth-migrations:
     build: ./auth-service
-    expose:
-      - "8000"
+    command: >
+      sh -c "
+        python wait-for-postgres.py &&
+        echo 'Running Alembic migrations...' &&
+        alembic upgrade head &&
+        echo 'Migrations completed successfully!'
+      "
     env_file:
       - ./.env
-    volumes:
-      - auth_logs:/opt/app/log
+    environment:
+      POSTGRES_HOST: theatre-db
+      POSTGRES_PORT: 5432
+      POSTGRES_AUTH_USER: ${POSTGRES_AUTH_USER:-auth_admin}
+      POSTGRES_AUTH_PASSWORD: ${POSTGRES_AUTH_PASSWORD:-secret}
+      POSTGRES_AUTH_DB: ${POSTGRES_AUTH_DB:-auth_service_db}
+      POSTGRES_AUTH_SCHEMA: ${POSTGRES_AUTH_SCHEMA:-auth}
+      POSTGRES_CHECK_DB: postgres
     depends_on:
       theatre-db:
         condition: service_healthy
+    networks:
+      - default
+    restart: "no"
+
+  auth-service:
+    build: ./auth-service
+    expose:
+      - "8001"
+    env_file:
+      - ./.env
+    volumes:
+      - auth_logs:/opt/app/logs
+    depends_on:
+      auth-migrations:
+        condition: service_completed_successfully
       auth-redis:
         condition: service_healthy
     networks:
@@ -177,26 +216,6 @@ services:
       - default
     restart: always
 
-  auth-redis:
-    image: redis:7.2-alpine
-    command: >
-      redis-server
-      --port 6379
-      --requirepass ${REDIS_AUTH_PASSW}
-      --maxmemory 128mb
-      --maxmemory-policy noeviction
-    environment:
-      - REDIS_PASSWORD=${REDIS_AUTH_PASSW}
-    volumes:
-      - auth_redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_AUTH_PASSW}", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - default
-    restart: always
 
 volumes:
   postgres_data:

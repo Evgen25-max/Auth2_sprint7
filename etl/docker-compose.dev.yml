@@ -1,0 +1,223 @@
+# docker-compose.dev.yml
+# Только инфраструктура для локальной разработки
+# auth-service и fastapi запускаем локально через uvicorn
+
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: dev-jaeger
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - dev_net
+
+  theatre-db:
+    image: postgres:17-alpine
+    container_name: dev-postgres
+    env_file:
+      - ./.env
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"${POSTGRES_USER:-postgres}\" -d \"${POSTGRES_DB:-postgres}\""
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dev_net
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.6.2
+    container_name: dev-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms2g -Xmx2g
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - dev_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: dev-redis
+    command: >
+      redis-server
+      --port 6379
+      --requirepass ${REDIS_PASSW}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSW}", "ping"]
+      interval: 6s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dev_net
+
+  auth-redis:
+    image: redis:7.2-alpine
+    container_name: dev-auth-redis
+    command: >
+      redis-server
+      --port 6380
+      --requirepass ${REDIS_AUTH_PASSW}
+      --maxmemory 128mb
+    ports:
+      - "6380:6380"
+    volumes:
+      - auth_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "-a", "${REDIS_AUTH_PASSW}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dev_net
+
+  auth-migrations:
+    build: ./auth-service
+    command: >
+      sh -c "
+        python wait-for-postgres.py &&
+        echo 'Running Alembic migrations...' &&
+        alembic upgrade head &&
+        echo 'Migrations completed successfully!'
+      "
+    env_file:
+      - ./.env
+    environment:
+      POSTGRES_HOST: theatre-db
+      POSTGRES_PORT: 5432
+      POSTGRES_AUTH_USER: ${POSTGRES_AUTH_USER:-auth_admin}
+      POSTGRES_AUTH_PASSWORD: ${POSTGRES_AUTH_PASSWORD:-secret}
+      POSTGRES_AUTH_DB: ${POSTGRES_AUTH_DB:-auth_service_db}
+      POSTGRES_AUTH_SCHEMA: ${POSTGRES_AUTH_SCHEMA:-auth}
+      POSTGRES_CHECK_DB: postgres
+    depends_on:
+      theatre-db:
+        condition: service_healthy
+    networks:
+      - dev_net
+    restart: "no"
+
+  stats-redis:
+    image: redis:7.2-alpine
+    container_name: dev-stats-redis
+    command: >
+      redis-server
+      --port 6381
+      --requirepass ${STATS_REDIS_PASSW}
+      --maxmemory 64mb
+      --maxmemory-policy noeviction
+    ports:
+      - "6381:6381"
+    volumes:
+      - stats_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6381", "-a", "${STATS_REDIS_PASSW}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dev_net
+
+  service:
+    build: app
+    expose:
+      - "8000"
+    env_file:
+      - ./.env
+    volumes:
+      - static_data:/var/www/static
+      - media_data:/var/www/media
+    networks:
+      - dev_net
+    depends_on:
+      theatre-db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.6.2
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - dev_net
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  nginx:
+    image: nginx:latest
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./configs:/etc/nginx/conf.d:ro
+      - static_data:/var/www/static:ro
+      - media_data:/var/www/media:ro
+    depends_on:
+      service:
+        condition: service_started
+    networks:
+      - dev_net
+    ports:
+      - "80:80"
+      - "8000:8000"
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  etl:
+    build: ./etl
+    env_file:
+      - ./.env
+    volumes:
+      - etl_logs:/opt/app/log
+      - etl_state:/opt/app/state
+    depends_on:
+      theatre-db:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      dev_net:
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  esdata:
+  redis_data:
+  auth_redis_data:
+  static_data:
+  media_data:
+  etl_logs:
+  etl_state:
+  stats_redis_data:
+
+networks:
+  dev_net:
+    driver: bridge

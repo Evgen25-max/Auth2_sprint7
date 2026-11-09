@@ -5,14 +5,27 @@ from functools import wraps
 from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 
-from services.custom_exception import (InvalidCredentialsError,
-                                       PermissionNotFoundError,
-                                       RoleAlreadyExistsError,
-                                       RoleNotFoundError, TokenError,
-                                       UserAlreadyExistsError,
-                                       UserNotFoundError)
+from services.custom_exception import (
+    AccountLockedError,
+    CannotUnlinkLastAuthMethodError,
+    InvalidCredentialsError,
+    MergeRequiresPasswordError,
+    MergeWithSelfError,
+    OAuthProviderError,
+    OAuthStateError,
+    PermissionNotFoundError,
+    RoleAlreadyExistsError,
+    RoleNotFoundError,
+    SocialAccountAlreadyLinkedError,
+    SocialAccountLinkedToAnotherUserError,
+    SocialAccountNotLinkedError,
+    TokenError,
+    UserAlreadyExistsError,
+    UserNotFoundError,
+)
 
 CUSTOM_EXCEPTIONS = (
+    AccountLockedError,
     UserAlreadyExistsError,
     InvalidCredentialsError,
     UserNotFoundError,
@@ -20,17 +33,26 @@ CUSTOM_EXCEPTIONS = (
     RoleAlreadyExistsError,
     RoleNotFoundError,
     PermissionNotFoundError,
+    OAuthProviderError,
+    OAuthStateError,
+    SocialAccountAlreadyLinkedError,
+    SocialAccountLinkedToAnotherUserError,
+    SocialAccountNotLinkedError,
+    CannotUnlinkLastAuthMethodError,
+    MergeRequiresPasswordError,
+    MergeWithSelfError,
 )
 
 logger = logging.getLogger(__name__)
 
 
 def handle_storage_errors(func):
-    """Логирует ошибки БД/Redis и raise.
-
-    CUSTOM_EXCEPTIONS пропускаем без изменений,
-    другие  -> 503 Service Unavailable.
     """
+    Логирует ошибки БД/Redis и пробрасывает их дальше.
+    CUSTOM_EXCEPTIONS не трогаем.
+    SQLAlchemyError / RedisError приводят к 503 через обработчик в main.py.
+    """
+
     @wraps(func)
     async def wrapper(*args, **kwargs):
         try:
@@ -44,9 +66,7 @@ def handle_storage_errors(func):
             )
             raise
         except Exception as e:
-            logger.exception(
-                'Неожиданная ошибка в %s: %s',
-                func.__name__, e,
-            )
+            logger.exception('Неожиданная ошибка в %s: %s', func.__name__, e)
             raise
+
     return wrapper

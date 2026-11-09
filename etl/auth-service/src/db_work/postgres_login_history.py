@@ -6,8 +6,10 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db_work.abc_login_history import LoginHistoryRepository
+from core.tracing_decorators import trace_class, traced
 
 
+@trace_class
 class PostgresLoginHistoryRepository(LoginHistoryRepository):
     """Работа с таблицей auth.login_history."""
 

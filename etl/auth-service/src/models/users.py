@@ -5,7 +5,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class UserCreate(BaseModel):
     """Регистрация."""
-
     login: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=8, max_length=256)
     first_name: str = Field(..., max_length=50)
@@ -14,7 +13,6 @@ class UserCreate(BaseModel):
 
 class UserLogin(BaseModel):
     """Вход."""
-
     login: str
     password: str
 
@@ -29,9 +27,9 @@ class UserUpdate(BaseModel):
 
 class UserPublic(BaseModel):
     """Ответ наружу: без hashed_password."""
-
     id: UUID
     login: str
+    email: str | None = None
     first_name: str | None = None
     last_name: str | None = None
     roles: list[str] = Field(default_factory=list)
@@ -41,7 +39,6 @@ class UserPublic(BaseModel):
     @field_validator('roles', mode='before')
     @classmethod
     def extract_role_names(cls, v):
-        """Извлекает имена ролей из объектов Role ORM."""
         if not v:
             return []
         if v and hasattr(v[0], 'name'):

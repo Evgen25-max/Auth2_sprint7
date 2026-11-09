@@ -19,10 +19,12 @@ from services.custom_exception import (PermissionNotFoundError,
                                        RoleAlreadyExistsError,
                                        RoleNotFoundError)
 from services.exception_handler import handle_storage_errors
+from core.tracing_decorators import trace_class
 
 logger = logging.getLogger(__name__)
 
 
+@trace_class
 class RBACService:
     """Логика RBAC с Redis-кэша."""
 
@@ -167,7 +169,6 @@ class RBACService:
         try:
             await self._redis.delete(cache_key)
         except RedisError as e:
-            # Пункт 8: не падаем, кэш сам умрёт по TTL (максимум 15 минут)
             logger.warning('Не удалось очистить кэш прав для %s: %s', user_id, e)
 
     @handle_storage_errors

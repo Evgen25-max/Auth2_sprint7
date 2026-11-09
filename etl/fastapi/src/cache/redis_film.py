@@ -9,10 +9,13 @@ from api.const import FILM_CACHE_EXPIRE_IN_SECONDS
 from models.film import Film
 from cache.abc_cache import FilmCache
 from services.exception_handler import handle_redis_errors
+from core.tracing_decorators import trace_class, traced
+
 
 logger = logging.getLogger(__name__)
 
 
+@trace_class
 class RedisFilmCache(FilmCache):
     """Реализация кэша на Redis."""
 

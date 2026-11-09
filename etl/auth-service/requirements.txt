@@ -5,10 +5,10 @@ pydantic-settings==2.7.1
 sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 alembic==1.14.0
-passlib==1.7.4
+passlib[bcrypt]>=1.7.4
 bcrypt==4.0.1
 PyJWT==2.10.1
-redis==5.2.1
+redis[hiredis]>=5.0.0
 typer==0.15.1
 pytest==8.3.4
 pytest-asyncio==0.25.0
@@ -17,8 +17,16 @@ flake8==7.1.1
 black==24.10.0
 isort==5.13.2
 mypy==1.14.1
-opentelemetry-api
-opentelemetry-sdk
-opentelemetry-instrumentation-fastapi
-opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-instrumentation-httpx
+
+# OpenTelemetry
+opentelemetry-api==1.28.0
+opentelemetry-sdk==1.28.0
+opentelemetry-exporter-otlp-proto-grpc==1.28.0
+opentelemetry-instrumentation==0.49b0
+opentelemetry-instrumentation-asgi==0.49b0
+opentelemetry-instrumentation-fastapi==0.49b0
+opentelemetry-instrumentation-httpx==0.49b0
+opentelemetry-instrumentation-redis==0.49b0
+opentelemetry-instrumentation-sqlalchemy==0.49b0
+
+orjson==3.10.7

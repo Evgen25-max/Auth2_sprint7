@@ -38,9 +38,16 @@ services:
   auth-service:
     build:
       context: ../../auth-service
+
     environment:
+      # === OpenTelemetry ===
+      OTEL_TRACES_EXPORTER: console
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://localhost:4317   # ← добавлено (dummy, exporter=console)
+
+      # === Project ===
       PROJECT_NAME: auth-test
 
+      # === PostgreSQL ===
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_AUTH_USER: ${POSTGRES_AUTH_USER:-auth_admin}
@@ -53,23 +60,41 @@ services:
 
       POSTGRES_ECHO: "false"
 
-      # === ИСПРАВЛЕНО: Имена переменных теперь точно совпадают с core/config.py ===
+      # === Auth Redis ===
       REDIS_AUTH_HOST: auth-redis
       REDIS_AUTH_PORT: 6379
       REDIS_AUTH_PASSW: ${REDIS_AUTH_PASSW:-test-auth-redis-pass}
       REDIS_AUTH_DB: 1
       REDIS_CONNECT_TIMEOUT: 5
       REDIS_SOCKET_TIMEOUT: 5
-      # ============================================================================
 
+      # === Rate limit (в тестовом compose нет отдельного redis → отключаем) ===
+      RATE_LIMIT_ENABLED: "false"
+
+      # === JWT ===
       JWT_SECRET_KEY: test-jwt-secret-key-for-functional-tests
       JWT_ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 15
       REFRESH_TOKEN_EXPIRE_DAYS: 7
 
+      # === Permissions cache ===
       PERMS_CACHE_TTL_SECONDS: 60
 
+      # === Password pepper ===
       PASSWORD_PEPPER: test-password-pepper-for-functional-tests
+
+      # === Yandex OAuth (dummy — чтобы прошёл валидацию обязательных полей) ===
+      YANDEX_CLIENT_ID: test-yandex-client-id
+      YANDEX_CLIENT_SECRET: test-yandex-client-secret
+      YANDEX_REDIRECT_URI: http://127.0.0.1/auth/callback
+      YANDEX_AUTH_URL: https://oauth.yandex.ru/authorize
+      YANDEX_TOKEN_URL: https://oauth.yandex.ru/token
+      YANDEX_INFO_URL: https://login.yandex.ru/info
+
+      # === VK OAuth (dummy на будущее, сейчас с дефолтами, но лучше задать явно) ===
+      VK_CLIENT_ID: test-vk-client-id
+      VK_CLIENT_SECRET: test-vk-client-secret
+      VK_REDIRECT_URI: http://127.0.0.1/auth/callback
 
     depends_on:
       postgres:
@@ -98,7 +123,7 @@ services:
     environment:
       SERVICE_URL: http://auth-service:8001
 
-      # Настройки БД (должны совпадать с test_settings в conftest.py)
+
       TEST_POSTGRES_HOST: postgres
       TEST_POSTGRES_PORT: 5432
       TEST_POSTGRES_USER: ${POSTGRES_AUTH_USER:-auth_admin}
@@ -106,7 +131,7 @@ services:
       TEST_POSTGRES_DB: ${POSTGRES_AUTH_DB:-auth_service_db}
       TEST_AUTH_SCHEMA: ${POSTGRES_AUTH_SCHEMA:-auth}
 
-      # Настройки Redis (имена должны совпадать с conftest.py, но значения вести на auth-redis)
+
       TEST_REDIS_HOST: auth-redis
       TEST_REDIS_PORT: 6379
       TEST_REDIS_PASSW: ${REDIS_AUTH_PASSW:-test-auth-redis-pass}

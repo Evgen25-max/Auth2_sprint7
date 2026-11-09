@@ -8,8 +8,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from services.film import FilmService, get_film_service
 from services.custom_exceptions import FilmNotFoundError
+from api.auth_deps import get_optional_user_payload, require_permission
+
 
 router = APIRouter()
+
+
+@router.get('/restricted')
+async def restricted_films(
+    payload: dict = Depends(require_permission('film.restricted.view')),
+    film_service: FilmService = Depends(get_film_service),
+):
+    """Эндпоинт, доступный только с правом film.restricted.view."""
+    films = await film_service.get_all(
+        page=1, page_size=10,
+        sort_field='id', sort_order='asc',
+        filters=FilmFilter(),
+    )
+    return [film.model_dump() for film in films]
 
 
 @router.get('/{film_id}')

@@ -7,6 +7,8 @@ from models.auth_models import Permission, Role
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from core.tracing_decorators import trace_class, traced
+
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ SYSTEM_ROLES = [
 ]
 
 
+@traced(name='seed.seed_default_permissions')
 async def seed_default_permissions(session: AsyncSession) -> dict[str, Permission]:
     """Создаёт системные права, если их нет.
     Возвращает словарь codename -> Permission.
@@ -57,6 +60,7 @@ async def seed_default_permissions(session: AsyncSession) -> dict[str, Permissio
     return perms_by_code
 
 
+@traced(name='seed.seed_default_roles')
 async def seed_default_roles(
     session: AsyncSession,
     perms_by_code: dict[str, Permission],
@@ -104,6 +108,7 @@ async def seed_default_roles(
     await session.commit()
 
 
+@traced(name='seed.seed_system_data')
 async def seed_system_data(session: AsyncSession) -> None:
     """Главная точка входа: сидирует права и роли."""
     logger.info('Запуск сидирования системных данных...')

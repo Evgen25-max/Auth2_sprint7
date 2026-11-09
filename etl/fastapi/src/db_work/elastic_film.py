@@ -10,12 +10,14 @@ from db_work.abc_film import FilmRepository
 from services.exception_handler import handle_elastic_errors
 from services.custom_exceptions import FilmNotFoundError, FilmDataError, IndexNotFoundError
 from elasticsearch import NotFoundError as ESNotFoundError
+from core.tracing_decorators import trace_class, traced
 
 logger = logging.getLogger(__name__)
 
 MOVIES_INDEX = 'movies'
 
 
+@trace_class
 class ElasticFilmRepository(FilmRepository):
     """Реализация хранилища на Elasticsearch."""
 

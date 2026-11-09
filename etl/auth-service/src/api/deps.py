@@ -1,4 +1,5 @@
 
+import json
 import logging
 from uuid import UUID
 
@@ -18,7 +19,7 @@ from redis.asyncio import Redis
 from services.custom_exception import TokenError, UserNotFoundError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.const import BLACKLIST_PREFIX, PERMS_CACHE_PREFIX
+from api.const import BLACKLIST_PREFIX, PERMS_CACHE_PREFIX, USER_VER_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,11 @@ async def get_token_payload(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     redis: Redis = Depends(get_redis),
 ) -> dict:
-    """Проверяет токен и его валидность/blacklist.
-       HTTPException 401: если токен отсутствует, невалиден, истек или отозван.
+    """
+    Проверяет токен и его валидность/blacklist/user_ver.
+
+    HTTPException 401: если токен отсутствует, невалиден
+    или устарел из-за смены пароля/логина.
     """
     if credentials is None:
         raise HTTPException(
@@ -55,7 +59,7 @@ async def get_token_payload(
             headers={'WWW-Authenticate': 'Bearer'},
         )
 
-    # Проверка типа токена
+    # Проверка типа токена.
     if payload.get('type') != TOKEN_TYPE_ACCESS:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -63,7 +67,7 @@ async def get_token_payload(
             headers={'WWW-Authenticate': 'Bearer'},
         )
 
-    # Проверка blacklist (logout)
+    # Проверка blacklist (logout).
     jti = payload.get('jti')
     if not jti:
         raise HTTPException(
@@ -77,6 +81,27 @@ async def get_token_payload(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='Токен был отозван',
         )
+
+    # Проверка версии токена через Redis.
+    user_id = payload.get('sub')
+    if user_id:
+        raw_current_ver = await redis.get(f'{USER_VER_PREFIX}:{user_id}')
+        if raw_current_ver is not None:
+            try:
+                token_ver = int(payload.get('ver', 1))
+                current_ver = int(raw_current_ver)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail='Некорректная версия токена',
+                )
+
+            if token_ver < current_ver:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail='Сессия недействительна: пароль или логин были изменены',
+                )
+
     return payload
 
 
@@ -103,18 +128,31 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='Некорректный user_id в токене',
         )
+
     repo = PostgresUserRepository(session)
     user = await repo.get_by_id(user_id)
+
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Пользователь не найден',
         )
-    if int(payload.get('ver', 1)) != user.token_version:
+
+    try:
+        token_ver = int(payload.get('ver', 1))
+        current_ver = int(user.token_version)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Некорректная версия токена',
+        )
+
+    if token_ver < current_ver:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='Сессия недействительна: пароль был изменён',
         )
+
     return user
 
 
@@ -127,7 +165,11 @@ def require_permission(permission_codename: str):
         session: AsyncSession = Depends(get_session),
     ) -> User:
         if user.is_superuser:
-            logger.debug('Superuser %s bypassed permission check for %s', user.login, permission_codename)
+            logger.debug(
+                'Superuser %s bypassed permission check for %s',
+                user.login,
+                permission_codename,
+            )
             return user
 
         cache_key = f'{PERMS_CACHE_PREFIX}:{user.id}'
@@ -136,22 +178,27 @@ def require_permission(permission_codename: str):
         try:
             cached_perms_json = await redis.get(cache_key)
             if cached_perms_json:
-                import json
                 perms_set = set(json.loads(cached_perms_json))
-                logger.debug('Permissions loaded from CACHE for user %s: %s', user.id, perms_set)
+                logger.debug(
+                    'Permissions loaded from CACHE for user %s: %s',
+                    user.id,
+                    perms_set,
+                )
         except Exception as e:
             logger.warning('Redis error while getting cache: %s', e)
 
         if perms_set is None:
             rbac_repo = PostgresRBACRepository(session)
-
             db_perms_list = await rbac_repo.get_user_permissions(user.id)
             perms_set = set(db_perms_list)
 
-            logger.debug('Permissions loaded from DB for user %s: %s', user.id, perms_set)
+            logger.debug(
+                'Permissions loaded from DB for user %s: %s',
+                user.id,
+                perms_set,
+            )
 
             try:
-                import json
                 await redis.setex(
                     cache_key,
                     config.PERMS_CACHE_TTL_SECONDS,
@@ -161,13 +208,22 @@ def require_permission(permission_codename: str):
                 logger.warning('Redis error while setting cache: %s', e)
 
         if permission_codename not in perms_set:
-            logger.info('ACCESS DENIED: User %s lacks permission %s. Has: %s', user.id, permission_codename, perms_set)
+            logger.info(
+                'ACCESS DENIED: User %s lacks permission %s. Has: %s',
+                user.id,
+                permission_codename,
+                perms_set,
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f'Недостаточно прав: требуется {permission_codename}',
             )
 
-        logger.debug('ACCESS GRANTED: User %s has permission %s', user.id, permission_codename)
+        logger.debug(
+            'ACCESS GRANTED: User %s has permission %s',
+            user.id,
+            permission_codename,
+        )
         return user
 
     return checker
@@ -175,6 +231,7 @@ def require_permission(permission_codename: str):
 
 def require_role(role_name: str):
     """Фабрика зависимостей для проверки конкретной роли."""
+
     async def checker(
         user: User = Depends(get_current_user),
     ) -> User:
@@ -185,30 +242,57 @@ def require_role(role_name: str):
                 detail=f'Требуется роль: {role_name}',
             )
         return user
+
     return checker
 
 
 async def get_optional_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(HTTPBearer(auto_error=False)),
+    credentials: HTTPAuthorizationCredentials | None = Depends(
+        HTTPBearer(auto_error=False)
+    ),
     redis: Redis = Depends(get_redis),
     session: AsyncSession = Depends(get_session),
 ) -> User | None:
-    """Возвращает пользователя, если он авторизован, иначе None.
+    """
+    Возвращает пользователя, если он авторизован, иначе None.
     """
     if credentials is None:
         return None
 
     try:
         payload = decode_token(credentials.credentials)
+
         if payload.get('type') != TOKEN_TYPE_ACCESS:
             return None
 
         jti = payload.get('jti')
+        if not jti:
+            return None
+
         if await redis.exists(f'{BLACKLIST_PREFIX}:{jti}'):
             return None
 
-        user_id = UUID(payload['sub'])
+        user_id_raw = payload.get('sub')
+        if not user_id_raw:
+            return None
+
+        user_id = UUID(user_id_raw)
         repo = PostgresUserRepository(session)
-        return await repo.get_by_id(user_id)
+        user = await repo.get_by_id(user_id)
+
+        if user is None:
+            return None
+
+        try:
+            token_ver = int(payload.get('ver', 1))
+            current_ver = int(user.token_version)
+        except (TypeError, ValueError):
+            return None
+
+        if token_ver < current_ver:
+            return None
+
+        return user
     except Exception:
         return None
+    

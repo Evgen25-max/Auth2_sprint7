@@ -1,4 +1,3 @@
-
 from abc import ABC, abstractmethod
 from typing import Optional
 from uuid import UUID
@@ -11,12 +10,15 @@ class UserRepository(ABC):
 
     @abstractmethod
     async def get_by_id(self, user_id: UUID) -> Optional[User]:
-        """Получает пользователя по ID."""
         ...
 
     @abstractmethod
     async def get_by_login(self, login: str) -> Optional[User]:
-        """Получает пользователя по логину (для входа/регистрации)."""
+        ...
+
+    @abstractmethod
+    async def get_by_email(self, email: str) -> Optional[User]:
+        """Получает пользователя по доверенному email (для OAuth-связывания)."""
         ...
 
     @abstractmethod
@@ -28,12 +30,21 @@ class UserRepository(ABC):
         last_name: str,
         is_superuser: bool = False,
     ) -> User:
-        """Создает нового пользователя."""
+        ...
+
+    @abstractmethod
+    async def create_oauth_user(
+        self,
+        login: str,
+        email: str | None = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
+    ) -> User:
+        """Создаёт пользователя без пароля (для входа через соцсеть). НЕ делает commit."""
         ...
 
     @abstractmethod
     async def update_password(self, user_id: UUID, new_hashed_password: str) -> None:
-        """Обновляет пароль пользователя."""
         ...
 
     @abstractmethod
@@ -44,5 +55,9 @@ class UserRepository(ABC):
         first_name: str | None = None,
         last_name: str | None = None,
     ) -> User:
-        """Обновляет профильные данные (без пароля)."""
+        ...
+
+    @abstractmethod
+    async def delete(self, user_id: UUID) -> None:
+        """Удаляет пользователя. НЕ делает commit."""
         ...

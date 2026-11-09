@@ -1,13 +1,24 @@
 
-import json
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
-from api.const import BLACKLIST_PREFIX, REFRESH_ACTIVE_PREFIX
-from core.security import (TOKEN_TYPE_REFRESH, create_access_token,
-                           create_refresh_token, decode_token, hash_password,
-                           verify_password)
+from api.const import (
+    BLACKLIST_PREFIX,
+    FAILED_ATTEMPTS_PREFIX,
+    LOCKOUT_PREFIX,
+    REFRESH_ACTIVE_PREFIX,
+    USER_VER_PREFIX,
+)
+from core.config import config
+from core.security import (
+    TOKEN_TYPE_REFRESH,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 from db.postgres import get_session
 from db.redis import get_redis
 from db_work.abc_login_history import LoginHistoryRepository
@@ -18,16 +29,23 @@ from db_work.postgres_rbac import PostgresRBACRepository
 from db_work.postgres_users import PostgresUserRepository
 from fastapi import Depends
 from jwt import ExpiredSignatureError, PyJWTError
+from models.auth_models import User
 from models.token import TokenPair
 from models.users import UserCreate, UserLogin, UserPublic
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.custom_exception import (InvalidCredentialsError, TokenError,
-                                       UserAlreadyExistsError,
-                                       UserNotFoundError)
+from services.custom_exception import (
+    AccountLockedError,
+    InvalidCredentialsError,
+    TokenError,
+    UserAlreadyExistsError,
+    UserNotFoundError,
+)
 from services.exception_handler import handle_storage_errors
 from services.rbac import RBACService
+from core.tracing_decorators import trace_class
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +56,46 @@ def _get_ttl_seconds(exp_timestamp: int) -> int:
     return max(int(exp_timestamp - now), 1)
 
 
+async def issue_token_pair(user: User, redis: Redis) -> TokenPair:
+    """
+    Выдаёт пару JWT-токенов для пользователя и фиксирует refresh в Redis.
+    """
+    access_token = create_access_token(
+        str(user.id), user.is_superuser, version=user.token_version
+    )
+    refresh_token = create_refresh_token(
+        str(user.id), user.is_superuser, version=user.token_version
+    )
+    refresh_payload = decode_token(refresh_token)
+    ttl = _get_ttl_seconds(refresh_payload['exp'])
+    await redis.setex(
+        f'{REFRESH_ACTIVE_PREFIX}:{user.id}',
+        ttl,
+        refresh_payload['jti'],
+    )
+    return TokenPair(access_token=access_token, refresh_token=refresh_token)
+
+
+_FAILED_ATTEMPTS_LUA = """
+local failed_key = KEYS[1]
+local lockout_key = KEYS[2]
+local threshold = tonumber(ARGV[1])
+local window_sec = tonumber(ARGV[2])
+local lockout_sec = tonumber(ARGV[3])
+local n = redis.call('INCR', failed_key)
+if n == 1 then
+    redis.call('EXPIRE', failed_key, window_sec)
+end
+if n >= threshold then
+    redis.call('SETEX', lockout_key, lockout_sec, '1')
+    redis.call('DEL', failed_key)
+    return 2
+end
+return 1
+"""
+
+
+@trace_class
 class AuthService:
     """Бизнес-логика аутентификации."""
 
@@ -52,6 +110,54 @@ class AuthService:
         self._rbac = rbac_service
         self._history = history_repo
         self._redis = redis
+
+    @property
+    def _session(self) -> AsyncSession:
+        return self._users._session
+
+    @property
+    def rbac(self) -> RBACService:
+        return self._rbac
+
+    # ------------------------------------------------------------------
+    # Lockout helpers
+    # ------------------------------------------------------------------
+
+    async def _is_locked_out(self, user_id: UUID) -> bool:
+        return bool(await self._redis.exists(f'{LOCKOUT_PREFIX}:{user_id}'))
+
+    async def _register_failed_attempt(self, user_id: UUID) -> None:
+        failed_key = f'{FAILED_ATTEMPTS_PREFIX}:{user_id}'
+        lockout_key = f'{LOCKOUT_PREFIX}:{user_id}'
+        await self._redis.eval(
+            _FAILED_ATTEMPTS_LUA,
+            2,
+            failed_key,
+            lockout_key,
+            config.LOGIN_FAILED_THRESHOLD,
+            config.LOGIN_FAILED_WINDOW_SEC,
+            config.LOGIN_LOCKOUT_SEC,
+        )
+
+    async def _clear_failed_attempts(self, user_id: UUID) -> None:
+        await self._redis.delete(
+            f'{FAILED_ATTEMPTS_PREFIX}:{user_id}',
+            f'{LOCKOUT_PREFIX}:{user_id}',
+        )
+
+    async def _publish_token_version(self, user_id: UUID, version: int) -> None:
+        try:
+            await self._redis.set(f'{USER_VER_PREFIX}:{user_id}', str(version))
+            logger.info('Опубликован user_ver=%s для пользователя %s', version, user_id)
+        except RedisError as e:
+            logger.error(
+                'Не удалось опубликовать user_ver для %s после commit: %s',
+                user_id, e,
+            )
+
+    # ------------------------------------------------------------------
+    # Signup
+    # ------------------------------------------------------------------
 
     @handle_storage_errors
     async def signup(self, data: UserCreate) -> UserPublic:
@@ -70,43 +176,44 @@ class AuthService:
 
         try:
             await self._rbac.assign_role_to_user(user.id, 'user', commit=False)
-        except Exception as e:
+        except Exception:
             await self._session.rollback()
-            logger.error('Не удалось назначить роль: %s', e)
+            logger.exception('Не удалось назначить роль user пользователю %s', user.login)
             raise
 
         await self._session.commit()
-
         await self._session.refresh(user, ['roles'])
         logger.info('Зарегистрирован пользователь %s', user.login)
         return UserPublic.model_validate(user)
 
+    # ------------------------------------------------------------------
+    # Login
+    # ------------------------------------------------------------------
+
     @handle_storage_errors
     async def login(self, data: UserLogin, ip: str | None, ua: str | None) -> TokenPair:
-        """Проверяет креды, пишет историю, выдает пару токенов."""
         user = await self._users.get_by_login(data.login)
 
-        success = False
-        user_id_for_history = None
+        if user and await self._is_locked_out(user.id):
+            logger.warning(
+                'Попытка входа в заблокированный аккаунт: login=%s ip=%s ua=%s',
+                data.login, ip, ua,
+            )
+            raise AccountLockedError(data.login)
 
-        if user and await verify_password(data.password, user.hashed_password):
+        success = False
+        user_id_for_history: UUID | None = None
+        tokens: TokenPair | None = None
+
+        if user and user.hashed_password and await verify_password(data.password, user.hashed_password):
             success = True
             user_id_for_history = user.id
-
-            access_token = create_access_token(str(user.id), user.is_superuser, version=user.token_version)
-            refresh_token = create_refresh_token(str(user.id), user.is_superuser, version=user.token_version)
-
-            refresh_payload = decode_token(refresh_token)
-            ttl = _get_ttl_seconds(refresh_payload['exp'])
-            await self._redis.setex(
-                f'{REFRESH_ACTIVE_PREFIX}:{user.id}',
-                ttl,
-                refresh_payload['jti'],
-            )
-
-            tokens = TokenPair(access_token=access_token, refresh_token=refresh_token)
+            await self._clear_failed_attempts(user.id)
+            tokens = await issue_token_pair(user, self._redis)
+            await self._publish_token_version(user.id, user.token_version)
         else:
-            tokens = None
+            if user:
+                await self._register_failed_attempt(user.id)
 
         await self._history.record_login(
             user_id=user_id_for_history,
@@ -119,13 +226,17 @@ class AuthService:
         if not success:
             raise InvalidCredentialsError()
 
+        if tokens is None:
+            raise InvalidCredentialsError()
+
         return tokens
 
-    # --- Обновление токена (Refresh) ---
+    # ------------------------------------------------------------------
+    # Refresh
+    # ------------------------------------------------------------------
 
     @handle_storage_errors
     async def refresh(self, refresh_token_str: str) -> TokenPair:
-        """Выдает новую пару токенов по валидному refresh-токену."""
         try:
             payload = decode_token(refresh_token_str)
         except ExpiredSignatureError:
@@ -144,7 +255,10 @@ class AuthService:
 
         stored_jti = await self._redis.get(f'{REFRESH_ACTIVE_PREFIX}:{user_id}')
         if stored_jti != jti:
-            logger.warning('Обнаружена попытка повторного использования refresh-токена для %s', user_id)
+            logger.warning(
+                'Обнаружена попытка повторного использования refresh-токена для %s',
+                user_id,
+            )
             await self._revoke_all_sessions(UUID(user_id))
             raise TokenError('refresh token rotation violation')
 
@@ -152,41 +266,42 @@ class AuthService:
         if user is None:
             raise UserNotFoundError(user_id)
 
+        try:
+            token_ver = int(payload.get('ver', 1))
+            current_ver = int(user.token_version)
+        except (TypeError, ValueError):
+            raise TokenError('invalid token version')
+
+        if token_ver < current_ver:
+            raise TokenError('refresh token version stale')
+
         old_ttl = _get_ttl_seconds(payload['exp'])
         await self._redis.setex(f'{BLACKLIST_PREFIX}:{jti}', old_ttl, '1')
-        new_access = create_access_token(str(user.id), user.is_superuser, version=user.token_version)
-        new_refresh = create_refresh_token(str(user.id), user.is_superuser, version=user.token_version)
 
-        new_refresh_payload = decode_token(new_refresh)
-        new_ttl = _get_ttl_seconds(new_refresh_payload['exp'])
+        tokens = await issue_token_pair(user, self._redis)
+        return tokens
 
-        await self._redis.setex(
-            f'{REFRESH_ACTIVE_PREFIX}:{user.id}',
-            new_ttl,
-            new_refresh_payload['jti'],
-        )
-
-        return TokenPair(access_token=new_access, refresh_token=new_refresh)
-
-    # --- Выход ---
+    # ------------------------------------------------------------------
+    # Logout
+    # ------------------------------------------------------------------
 
     @handle_storage_errors
     async def logout(self, access_payload: dict) -> None:
-        """Отозвает текущий access-токен и активный refresh-токен пользователя."""
         jti = access_payload['jti']
         user_id = access_payload['sub']
 
         ttl = _get_ttl_seconds(access_payload['exp'])
         await self._redis.setex(f'{BLACKLIST_PREFIX}:{jti}', ttl, '1')
-
         await self._redis.delete(f'{REFRESH_ACTIVE_PREFIX}:{user_id}')
 
         logger.info('Пользователь %s вышел из системы', user_id)
 
     async def _revoke_all_sessions(self, user_id: UUID) -> None:
-        """Метод для отзыва всех сессий."""
         await self._redis.delete(f'{REFRESH_ACTIVE_PREFIX}:{str(user_id)}')
 
+    # ------------------------------------------------------------------
+    # Me
+    # ------------------------------------------------------------------
 
     @handle_storage_errors
     async def get_me(self, user_id: UUID) -> UserPublic:
@@ -194,6 +309,10 @@ class AuthService:
         if user is None:
             raise UserNotFoundError(str(user_id))
         return UserPublic.model_validate(user)
+
+    # ------------------------------------------------------------------
+    # Update profile  ← ГЛАВНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ
+    # ------------------------------------------------------------------
 
     @handle_storage_errors
     async def update_profile(
@@ -205,46 +324,80 @@ class AuthService:
         first_name: str | None = None,
         last_name: str | None = None,
     ) -> UserPublic:
-        """Обновляет данные профиля."""
+        """
+        Обновляет профиль пользователя.
+
+        Правила:
+        - Смена логина/установка нового пароля — sensitive change.
+        - Смена имени/фамилии — НЕ sensitive, current_password не нужен.
+        - Если у пользователя УЖЕ есть пароль — требуется current_password.
+        - Если у пользователя НЕТ пароля (OAuth-only) — разрешаем установку
+          первого пароля без current_password. Это нужно, чтобы OAuth-юзер
+          мог задать пароль и потом отвязать соцсеть.
+        """
         user = await self._users.get_by_id(user_id)
         if user is None:
             raise UserNotFoundError(str(user_id))
+
         sensitive_change = (
             (login is not None and login != user.login)
             or password is not None
         )
-        if sensitive_change:
-            if not current_password:
-                raise InvalidCredentialsError()
-            if not await verify_password(current_password, user.hashed_password):
-                raise InvalidCredentialsError()
 
+        if sensitive_change:
+            has_password = bool(user.hashed_password)
+
+            if has_password:
+                # У пользователя уже есть пароль — требуем подтверждение.
+                if not current_password:
+                    raise InvalidCredentialsError()
+                if not await verify_password(current_password, user.hashed_password):
+                    raise InvalidCredentialsError()
+            else:
+                # OAuth-only пользователь без пароля.
+                # Разрешаем установку ПЕРВОГО пароля и/или смену логина
+                if current_password:
+                    logger.debug(
+                        'current_password передан для OAuth-only пользователя %s — игнорируем',
+                        user.id,
+                    )
+
+        # Обновляем логин
         if login and login != user.login:
             if await self._users.get_by_login(login):
                 raise UserAlreadyExistsError(login)
             user.login = login
 
+        # Обновляем пароль
         if password:
             user.hashed_password = await hash_password(password)
-        user.token_version += 1
-        await self._redis.delete(f'{REFRESH_ACTIVE_PREFIX}:{user.id}')
 
+        # Обновляем имя/фамилию
         if first_name is not None:
             user.first_name = first_name
         if last_name is not None:
             user.last_name = last_name
 
+        # Инвалидируем сессии только при чувствительных изменениях
+        if sensitive_change:
+            user.token_version += 1
+            await self._redis.delete(f'{REFRESH_ACTIVE_PREFIX}:{user.id}')
+
         await self._session.commit()
         await self._session.refresh(user)
+
+        # Публикуем новую версию токенов после успешного commit
+        if sensitive_change:
+            await self._publish_token_version(user.id, user.token_version)
+
         return UserPublic.model_validate(user)
 
-    @property
-    def _session(self) -> AsyncSession:
-        return self._users._session
+    # ------------------------------------------------------------------
+    # History
+    # ------------------------------------------------------------------
 
     @handle_storage_errors
     async def get_login_history(self, user_id: UUID, limit: int = 20) -> list:
-        """Возвращает историю входов пользователя."""
         return await self._history.get_recent_logins(user_id, limit=limit)
 
 
@@ -265,4 +418,3 @@ async def get_auth_service(
         history_repo=history_repo,
         redis=redis,
     )
-

@@ -16,8 +16,10 @@ from db_work.elastic_film import ElasticFilmRepository
 from services.custom_exceptions import FilmNotFoundError
 
 logger = logging.getLogger(__name__)
+from core.tracing_decorators import trace_class
 
 
+@trace_class
 class FilmService:
     """
     Бизнес-логика между кэшем и хранилищем.

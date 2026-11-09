@@ -11,7 +11,7 @@ dnspython==2.8.0
 elastic-transport==8.19.0
 elasticsearch==8.13.2
 email-validator==2.3.0
-fastapi==0.141.1
+fastapi==0.115.6
 fastapi-cli==0.0.32
 frozenlist==1.8.0
 h11==0.16.0
@@ -19,7 +19,7 @@ httpcore==1.0.9
 httptools==0.8.0
 httpx==0.28.1
 idna==3.19
-isort==9.0.1
+isort==5.13.2
 Jinja2==3.1.6
 markdown-it-py==4.2.0
 MarkupSafe==3.0.3
@@ -39,7 +39,7 @@ redis==5.0.4
 rich==15.0.0
 rich-toolkit==0.20.5
 shellingham==1.5.4
-starlette==1.6.0
+starlette==0.41.3
 typer==0.27.2
 typing-inspection==0.4.4
 typing_extensions==4.16.0
@@ -50,8 +50,21 @@ uvloop==0.22.1
 watchfiles==1.2.0
 websockets==17.1
 yarl==1.24.5
-opentelemetry-api
-opentelemetry-sdk
-opentelemetry-instrumentation-fastapi
-opentelemetry-exporter-otlp-proto-grpc
-opentelemetry-instrumentation-httpx
+cachetools==5.5.0
+# OpenTelemetry
+opentelemetry-api==1.28.0
+opentelemetry-sdk==1.28.0
+opentelemetry-exporter-otlp-proto-grpc==1.28.0
+opentelemetry-instrumentation==0.49b0
+opentelemetry-instrumentation-asgi==0.49b0
+opentelemetry-instrumentation-fastapi==0.49b0
+opentelemetry-instrumentation-httpx==0.49b0
+opentelemetry-instrumentation-redis==0.49b0
+opentelemetry-instrumentation-sqlalchemy==0.49b0
+opentelemetry-instrumentation-elasticsearch==0.49b0  # <-- ДОБАВЛЕНО
+
+
+
+elastic-transport==8.19.0
+elasticsearch==8.13.2
+PyJWT==2.10.1

@@ -1,5 +1,4 @@
 
-# Используем pydantic для упрощения работы при перегонке данных из json в объекты
 from typing import Optional
 
 from pydantic import BaseModel

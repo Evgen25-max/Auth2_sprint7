@@ -7,8 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from db_work.abc_rbac import RBACRepository
+from core.tracing_decorators import trace_class, traced
 
 
+@trace_class
 class PostgresRBACRepository(RBACRepository):
     """Работа с таблицами auth.roles, auth.permissions, auth.user_roles, auth.role_permissions."""
 
@@ -51,7 +53,7 @@ class PostgresRBACRepository(RBACRepository):
         result = await self._session.execute(stmt)
         return list(result.unique().scalars().all())
 
-    # === НОВЫЙ МЕТОД: список пользователей, у которых была эта роль ===
+    # список пользователей, у которых была эта роль ===
     async def get_users_by_role_id(self, role_id: UUID) -> list[UUID]:
         """Возвращает user_id всех пользователей, имеющих указанную роль."""
         stmt = select(UserRole.user_id).where(UserRole.role_id == role_id)

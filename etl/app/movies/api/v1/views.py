@@ -5,8 +5,12 @@ from django.http import JsonResponse
 from django.views.generic.detail import BaseDetailView
 from django.views.generic.list import BaseListView
 from movies.models import FilmWork, Roles
+from example.tracing_decorators import trace_class, traced
 
 
+@trace_class(
+    exclude={"serialize_filmwork", "annotate_filmwork", "render_to_response"},
+)
 class MoviesApiMixin:
     model = FilmWork
     http_method_names = ['get']
@@ -68,6 +72,7 @@ class MoviesApiMixin:
             'writers': film.writers,
         }
 
+    @traced(record_args=False)
     def render_to_response(self, context, **response_kwargs):
         return JsonResponse(context)
 
@@ -83,6 +88,7 @@ class MoviesApiMixin:
         return self.annotate_filmwork(queryset)
 
 
+@trace_class
 class MoviesListApi(MoviesApiMixin, BaseListView):
     paginate_by = 50
 
@@ -101,7 +107,7 @@ class MoviesListApi(MoviesApiMixin, BaseListView):
             'results': [self.serialize_filmwork(film) for film in films],
         }
 
-
+@trace_class
 class MoviesDetailApi(MoviesApiMixin, BaseDetailView):
 
     def get_context_data(self, **kwargs):

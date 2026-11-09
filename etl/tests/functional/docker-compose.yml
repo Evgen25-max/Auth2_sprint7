@@ -35,11 +35,14 @@ services:
       - test_net
 
   fastapi:
-    build: 
+    build:
       context: ../../fastapi
     env_file:
       - ../../.env
     environment:
+      - RATE_LIMIT_REQUESTS=100000
+      - RATE_LIMIT_PERIOD=60
+      - OTEL_TRACES_EXPORTER=console
       - ELASTIC_SCHEMA=http://
       - ELASTIC_HOST=elasticsearch
       - ELASTIC_PORT=9200
@@ -47,7 +50,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSW=${REDIS_PASSW}
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 8001)); s.close()\" || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -72,7 +75,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSW=${REDIS_PASSW}
-      - SERVICE_URL=http://fastapi:8001
+      - SERVICE_URL=http://fastapi:8002
     depends_on:
       elasticsearch:
         condition: service_healthy

@@ -1,6 +1,12 @@
 
 import os
 from pathlib import Path
+import os
+from pathlib import Path
+from example.tracing import configure_tracer
+
+
+configure_tracer(service_name='django-content')
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -30,8 +36,9 @@ INSTALLED_APPS = [
     'debug_toolbar',
     'django.contrib.staticfiles',
     'corsheaders',
-    'movies',
+    'movies.apps.MoviesConfig',
 ]
+
 
 MIDDLEWARE = [
     'debug_toolbar.middleware.DebugToolbarMiddleware',
@@ -40,9 +47,11 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
+    'movies.middleware.rate_limit.RateLimitMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'movies.middleware.auth_middleware.AuthMiddleware',
 ]
 
 if DEBUG:
@@ -130,3 +139,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 DEBUG_TOOLBAR_CONFIG = {
     'SHOW_TOOLBAR_CALLBACK': lambda request: DEBUG,
 }
+
+JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'change-me')
+JWT_ALGORITHM = 'HS256'
+REDIS_HOST = os.getenv('REDIS_HOST', 'redis')
+REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+REDIS_PASSW = os.getenv('REDIS_PASSW', None)
+REDIS_AUTH_DB = 1

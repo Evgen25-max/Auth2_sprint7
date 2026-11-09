@@ -1,110 +1,77 @@
--- Инициализация схемы auth для функциональных тестов
+-- Создание схемы auth и всех таблиц для тестов
+-- Должен точно соответствовать alembic/versions/0001_initial_schema.py
 
+-- 1. Создаём схему
 CREATE SCHEMA IF NOT EXISTS auth;
 
-SET search_path TO auth, public;
-
--- Права
-CREATE TABLE IF NOT EXISTS permissions (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    codename    varchar(100) NOT NULL,
-    name        varchar(255) NOT NULL,
-    CONSTRAINT uq_permissions_codename UNIQUE (codename)
+-- 2. Таблица users
+CREATE TABLE IF NOT EXISTS auth.users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    login VARCHAR(255) UNIQUE NOT NULL,
+    hashed_password VARCHAR(255) NOT NULL,
+    first_name VARCHAR(50),
+    last_name VARCHAR(50),
+    is_superuser BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    token_version INTEGER NOT NULL DEFAULT 1
 );
 
--- Роли
-CREATE TABLE IF NOT EXISTS roles (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        varchar(100) NOT NULL,
-    description text,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT uq_roles_name UNIQUE (name)
+-- 3. Таблица roles
+CREATE TABLE IF NOT EXISTS auth.roles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL UNIQUE,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
--- Пользователи
-CREATE TABLE IF NOT EXISTS users (
-    id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    login           varchar(255) NOT NULL,
-    hashed_password varchar(255) NOT NULL,
-    first_name      varchar(50),
-    last_name       varchar(50),
-    is_superuser    boolean NOT NULL DEFAULT false,
-    token_version INTEGER NOT NULL DEFAULT 1,
-    created_at      timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT uq_users_login UNIQUE (login)
+-- 4. Таблица permissions
+CREATE TABLE IF NOT EXISTS auth.permissions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    codename VARCHAR(100) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
 );
 
--- Пользователь <-> роль
-CREATE TABLE IF NOT EXISTS user_roles (
-    user_id    uuid NOT NULL,
-    role_id    uuid NOT NULL,
-    granted_at timestamptz NOT NULL DEFAULT now(),
-
-    PRIMARY KEY (user_id, role_id),
-
-    CONSTRAINT fk_user_roles_user_id
-        FOREIGN KEY (user_id)
-        REFERENCES users(id)
-        ON DELETE CASCADE,
-
-    CONSTRAINT fk_user_roles_role_id
-        FOREIGN KEY (role_id)
-        REFERENCES roles(id)
-        ON DELETE CASCADE
+-- 5. Связь пользователь <-> роль (M2M)
+CREATE TABLE IF NOT EXISTS auth.user_roles (
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    role_id UUID NOT NULL REFERENCES auth.roles(id) ON DELETE CASCADE,
+    granted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, role_id)
 );
 
--- Роль <-> право
-CREATE TABLE IF NOT EXISTS role_permissions (
-    role_id       uuid NOT NULL,
-    permission_id uuid NOT NULL,
+CREATE INDEX IF NOT EXISTS ix_user_roles_role_id ON auth.user_roles (role_id);
 
-    PRIMARY KEY (role_id, permission_id),
-
-    CONSTRAINT fk_role_permissions_role_id
-        FOREIGN KEY (role_id)
-        REFERENCES roles(id)
-        ON DELETE CASCADE,
-
-    CONSTRAINT fk_role_permissions_permission_id
-        FOREIGN KEY (permission_id)
-        REFERENCES permissions(id)
-        ON DELETE CASCADE
+-- 6. Связь роль <-> право (M2M)
+CREATE TABLE IF NOT EXISTS auth.role_permissions (
+    role_id UUID NOT NULL REFERENCES auth.roles(id) ON DELETE CASCADE,
+    permission_id UUID NOT NULL REFERENCES auth.permissions(id) ON DELETE CASCADE,
+    granted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
+    PRIMARY KEY (role_id, permission_id)
 );
-
--- История входов
-CREATE TABLE IF NOT EXISTS login_history (
-    id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id    uuid,
-    login      varchar(255) NOT NULL,
-    ip_address varchar(45),
-    user_agent text,
-    success    boolean NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT now(),
-
-    CONSTRAINT fk_login_history_user_id
-        FOREIGN KEY (user_id)
-        REFERENCES users(id)
-        ON DELETE SET NULL
-);
-
--- Индексы
-CREATE INDEX IF NOT EXISTS ix_users_login
-    ON users (login);
-
-CREATE INDEX IF NOT EXISTS ix_roles_name
-    ON roles (name);
-
-CREATE INDEX IF NOT EXISTS ix_permissions_codename
-    ON permissions (codename);
-
-CREATE INDEX IF NOT EXISTS ix_user_roles_role_id
-    ON user_roles (role_id);
 
 CREATE INDEX IF NOT EXISTS ix_role_permissions_permission_id
-    ON role_permissions (permission_id);
+    ON auth.role_permissions (permission_id);
+
+-- 7. История входов
+CREATE TABLE IF NOT EXISTS auth.login_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+    login VARCHAR(255) NOT NULL,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    success BOOLEAN NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
 
 CREATE INDEX IF NOT EXISTS ix_login_history_user_id
-    ON login_history (user_id);
-
+    ON auth.login_history (user_id);
 CREATE INDEX IF NOT EXISTS ix_login_history_created_at
-    ON login_history (created_at);
+    ON auth.login_history (created_at);
+
+-- 8. Сидирование базовых ролей (без прав — это делает conftest.py в тестах)
+INSERT INTO auth.roles (name, description)
+VALUES
+    ('user',  'Базовая роль сервиса'),
+    ('admin', 'Администратор сервиса')
+ON CONFLICT (name) DO NOTHING;

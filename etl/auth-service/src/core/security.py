@@ -6,6 +6,8 @@ import jwt
 from passlib.context import CryptContext
 import asyncio
 from core.config import config
+from core.tracing_decorators import trace_class, traced
+
 
 TOKEN_TYPE_ACCESS = 'access'
 TOKEN_TYPE_REFRESH = 'refresh'
@@ -17,16 +19,15 @@ async def hash_password(password: str) -> str:
     password_with_pepper = f"{password}{config.PASSWORD_PEPPER}"
     sha256_hash = hashlib.sha256(password_with_pepper.encode('utf-8')).hexdigest()
 
-    # Выносим блокирующую операцию bcrypt в поток
     return await asyncio.to_thread(pwd_context.hash, sha256_hash)
 
 
+@traced(name='seed.verify_password')
 async def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Асинхронно проверяет пароль, вынося bcrypt в отдельный поток."""
     password_with_pepper = f"{plain_password}{config.PASSWORD_PEPPER}"
     sha256_hash = hashlib.sha256(password_with_pepper.encode('utf-8')).hexdigest()
 
-    # Выносим блокирующую операцию проверки в поток
     return await asyncio.to_thread(pwd_context.verify, sha256_hash, hashed_password)
 
 

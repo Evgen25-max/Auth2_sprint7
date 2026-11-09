@@ -1,22 +1,31 @@
+
 import os
-from opentelemetry import trace, context
-from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.sampling import ALWAYS_ON
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from core.config import config
+from opentelemetry import trace, propagate
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from opentelemetry.instrumentation.elasticsearch import ElasticsearchInstrumentor
 
-# Глобальный провайдер нужен для доступа к нему в других модулях, если потребуется
+
 _tracer_provider = None
+_instrumentations_installed = False
+
 
 def configure_tracer(service_name: str) -> None:
     """
-    Настраивает OpenTelemetry tracer.
+    Настраивает OpenTelemetry tracer и базовые инструментации.
     """
-    global _tracer_provider
+    global _tracer_provider, _instrumentations_installed
+
+    if _tracer_provider is not None:
+        return
 
     # 1. Ресурс с именем сервиса
     resource = Resource(attributes={
@@ -31,13 +40,17 @@ def configure_tracer(service_name: str) -> None:
 
     # 3. OTLP-экспортер в Jaeger
     otlp_exporter = OTLPSpanExporter(
-        endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4317"),
+        endpoint=os.getenv(
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            config.OTEL_EXPORTER_OTLP_ENDPOINT,
+        ),
         insecure=True,
     )
 
     # 4. Добавляем процессоры
     provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
-    # ConsoleSpanExporter оставляем только для отладки локально, в проде лучше убрать
+
+    # ConsoleSpanExporter только для локальной отладки
     if os.getenv("ENVIRONMENT") == "development":
         provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
 
@@ -45,28 +58,23 @@ def configure_tracer(service_name: str) -> None:
     trace.set_tracer_provider(provider)
     _tracer_provider = provider
 
-    # 6. Инструментируем исходящие HTTP-запросы
-    HTTPXClientInstrumentor().instrument()
+    # 6. W3C Trace Context propagation
+    propagate.set_global_textmap(TraceContextTextMapPropagator())
 
-    # 7. Инструментируем FastAPI (автоматически создает спаны для входящих запросов)
-    # Важно: это нужно делать ПОСЛЕ создания app, но здесь мы только настраиваем трейсер.
-    # Сам вызов FastAPIInstrumentor.instrument_app(app) будет в main.py
+    # 7. Автоматические инструментации
+    if not _instrumentations_installed:
+        HTTPXClientInstrumentor().instrument()
+        RedisInstrumentor().instrument()
+        ElasticsearchInstrumentor().instrument()
+        _instrumentations_installed = True
 
-    print(f"[Tracing] Configured for '{service_name}' | Sampler: ALWAYS_ON")
 
 
-def inject_request_id(request_id: str):
+def inject_request_id(request_id: str) -> None:
     """
     Добавляет X-Request-Id как атрибут к текущему активному спану.
-    Это позволяет искать трейс в Jaeger по этому ID через поле Tags.
-
-    Вызывайте эту функцию в вашем Middleware после получения request_id.
     """
     current_span = trace.get_current_span()
 
     if current_span.is_recording():
-        # Добавляем тег http.request_id
         current_span.set_attribute("http.request_id", request_id)
-
-        # Опционально: Можно также добавить его в baggage, если хотите передавать дальше,
-        # но для поиска в Jaeger достаточно set_attribute.
