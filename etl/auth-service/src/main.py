@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from services.seed import seed_system_data
 from db.postgres import async_session
-from api.v1 import auth, roles, social, users
+from api.v1 import auth, roles, social, users, internal
 from core.config import config
 from core.logger import LOGGING
 from db import postgres, redis
@@ -245,3 +245,4 @@ app.include_router(auth.router, prefix='/api/v1')
 app.include_router(users.router, prefix='/api/v1')
 app.include_router(roles.router, prefix='/api/v1')
 app.include_router(social.router, prefix='/api/v1')
+app.include_router(internal.router, prefix='/api/v1')

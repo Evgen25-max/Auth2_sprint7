@@ -1,4 +1,5 @@
 include uwsgi_params;
+uwsgi_param HTTP_AUTHORIZATION $http_authorization;
 uwsgi_param Host $host;
 uwsgi_param X-Real-IP $remote_addr;
 uwsgi_param X-Forwarded-For $proxy_add_x_forwarded_for;

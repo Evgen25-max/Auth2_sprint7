@@ -14,6 +14,10 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 
 DEBUG = os.getenv('DEBUG', False) == 'True'
 
+REDIS_AUTH_HOST = os.getenv('REDIS_AUTH_HOST', 'auth-redis')
+REDIS_AUTH_PORT = int(os.getenv('REDIS_AUTH_PORT', 6380))
+REDIS_AUTH_PASSW = os.getenv('REDIS_AUTH_PASSW', '')
+REDIS_AUTH_DB = int(os.getenv('REDIS_AUTH_DB', 1))
 
 ALLOWED_HOSTS = [
     host.strip()

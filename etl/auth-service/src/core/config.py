@@ -11,6 +11,7 @@ logging_config.dictConfig(LOGGING)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+
 class Settings(BaseSettings):
     """Настройки auth-service, читаемые из .env."""
 
@@ -73,6 +74,8 @@ class Settings(BaseSettings):
     VK_CLIENT_ID: str = ''
     VK_CLIENT_SECRET: str = ''
     VK_REDIRECT_URI: str = 'http://127.0.0.1:8080/auth/callback'
+
+    INTERNAL_API_KEY: str
 
     @cached_property
     def database_url(self) -> str:

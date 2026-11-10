@@ -9,13 +9,12 @@ import httpx
 import jwt
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-
+from core.config import config
 from core.auth_keys import (
     BLACKLIST_PREFIX,
     PERMS_CACHE_PREFIX,
     USER_VER_PREFIX,
 )
-from core.config import config
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
@@ -84,17 +83,20 @@ class AuthClient:
 
         ВАЖНО:
             Текущий endpoint:
-                GET /api/v1/users/{user_id}/permissions
+                GET /api/v1/internal/users/{user_id}/permissions
+            Защищён служебным ключом X-Internal-Key.
         """
         with tracer.start_as_current_span('AuthClient.get_permissions'):
             try:
                 client = await self._get_client()
 
-                headers = {}
+                headers = {
+                    'X-Internal-Key': config.INTERNAL_API_KEY,
+                }
                 propagator.inject(headers)
 
                 response = await client.get(
-                    f'/api/v1/users/{user_id}/permissions',
+                    f'/api/v1/internal/users/{user_id}/permissions',
                     headers=headers,
                 )
 
@@ -108,9 +110,8 @@ class AuthClient:
                     user_id,
                 )
                 return None
-
             except Exception as e:
-                logger.warning('Не удалось получить права через Auth: %s', e)
+                logger.error('Ошибка получения прав: %s', e)
                 return None
 
 

@@ -10,39 +10,49 @@ from settings import test_settings
 
 BASE_URL = test_settings.service_url
 
+LOGIN_FAILED_THRESHOLD = 5
+
 
 @pytest.mark.asyncio
-async def test_login_rate_limiting(aiohttp_client, clean_db, clean_redis):
+async def test_login_account_lockout_after_failed_attempts(
+    aiohttp_client,
+    clean_db,
+    clean_redis,
+):
     """
-    На эндпоинт /login действует строгий rate limit.
-    После N неудачных попыток — 429.
+    После LOGIN_FAILED_THRESHOLD неверных попыток входа
+    аккаунт блокируется и возвращает 423.
     """
-    # Регистрируем пользователя
-    login = f'ratelimit_user_{uuid.uuid4().hex[:8]}'
+    login = f'lockout_user_{uuid.uuid4().hex[:8]}'
+
     signup = await aiohttp_client.post(
         f'{BASE_URL}/api/v1/auth/signup',
         json={
             'login': login,
             'password': 'StrongPass123!',
-            'first_name': 'Rate',
-            'last_name': 'Limit',
+            'first_name': 'Lockout',
+            'last_name': 'Test',
         },
     )
     assert signup.status == 201, await signup.text()
 
-    # Делаем много попыток логина с неправильным паролем
     statuses = []
-    for _ in range(20):
+
+    for _ in range(LOGIN_FAILED_THRESHOLD + 5):
         r = await aiohttp_client.post(
             f'{BASE_URL}/api/v1/auth/login',
-            json={'login': login, 'password': 'WrongPassword!'},
+            json={
+                'login': login,
+                'password': 'WrongPassword123!',
+            },
         )
         statuses.append(r.status)
 
-    # Либо получили 429 (rate limit), либо много 401 (если RL отключён в тестах)
-    assert 429 in statuses or statuses.count(401) > 5, (
-        f'Ожидался 429 или много 401, получили: {statuses}'
-    )
+    # Первые 5 попыток — неверный пароль.
+    assert statuses[:LOGIN_FAILED_THRESHOLD] == [401] * LOGIN_FAILED_THRESHOLD
+
+    # Дальше аккаунт заблокирован.
+    assert all(status == 423 for status in statuses[LOGIN_FAILED_THRESHOLD:])
 
 
 @pytest.mark.asyncio

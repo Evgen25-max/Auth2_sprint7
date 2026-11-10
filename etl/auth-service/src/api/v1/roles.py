@@ -7,7 +7,6 @@ from models.auth_models import Role, User
 from models.role import RoleCreate, RolePublic
 from services.rbac import RBACService, get_rbac_service
 
-from api.const import PERM_ROLE_MANAGE
 from api.deps import require_permission
 
 router = APIRouter(prefix='/roles', tags=['Roles & Permissions'])

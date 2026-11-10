@@ -8,6 +8,6 @@ FieldsParam = Annotated[
     str | None,
     Query(
         description='Список полей через запятую, например: id,title.\n'
-        f'Cписок доступных полей: {', '.join(sorted(FILM_FIELDS_WHITELIST))}'
+        f"Cписок доступных полей: {', '.join(sorted(FILM_FIELDS_WHITELIST))}"
         )
 ]

@@ -44,18 +44,19 @@ async def hash_password(password: str) -> str:
 
 async def reset_auth_db(conn: asyncpg.Connection) -> None:
     """
-    Полностью очищает схему auth и заново сеет системные права/роли.
+    Полностью очищает схему auth и заново дает системные права/роли.
     """
     schema = test_settings.auth_schema
 
     await conn.execute(f"""
         TRUNCATE TABLE
-            {schema}.login_history,
-            {schema}.user_roles,
-            {schema}.role_permissions,
-            {schema}.users,
-            {schema}.roles,
-            {schema}.permissions
+        {schema}.user_social_accounts,
+        {schema}.login_history,
+        {schema}.user_roles,
+        {schema}.role_permissions,
+        {schema}.users,
+        {schema}.roles,
+        {schema}.permissions
         RESTART IDENTITY CASCADE
     """)
 
@@ -69,7 +70,6 @@ async def reset_auth_db(conn: asyncpg.Connection) -> None:
             DO UPDATE SET name = EXCLUDED.name
             RETURNING id, codename
         """, codename, name)
-
         perm_ids[row['codename']] = row['id']
 
     for role_name, description, codenames in SYSTEM_ROLES:

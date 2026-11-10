@@ -48,7 +48,7 @@ from services.custom_exception import (
 )
 from services.exception_handler import handle_storage_errors
 from services.rbac import RBACService
-from core.tracing_decorators import trace_class
+from core.tracing_decorators import traced
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,6 @@ _PURPOSE_LINK = 'link'
 _PURPOSE_MERGE = 'merge'
 
 
-@trace_class
 class SocialAuthService:
     """
     Бизнес-логика входа, привязки, отвязки и объединения
@@ -131,7 +130,10 @@ class SocialAuthService:
     # ------------------------------------------------------------------
     # Вспомогательные
     # ------------------------------------------------------------------
-
+    @traced(
+        name="SocialAuthService.get_authorize_url",
+        allow_fields={"provider_name", "purpose", "user_id", "redirect_uri"},
+    )
     async def get_authorize_url(
         self,
         provider_name: str,
@@ -166,7 +168,10 @@ class SocialAuthService:
     # ------------------------------------------------------------------
     # Вход через соцсеть
     # ------------------------------------------------------------------
-
+    @traced(
+        name="SocialAuthService.oauth_login",
+        allow_fields={"provider_name"},
+    )
     @handle_storage_errors
     async def oauth_login(
         self,
@@ -258,7 +263,10 @@ class SocialAuthService:
     # ------------------------------------------------------------------
     # Привязка соцсети к текущему аккаунту
     # ------------------------------------------------------------------
-
+    @traced(
+        name="SocialAuthService.link_social",
+        allow_fields={"provider_name", "user_id"},
+    )
     @handle_storage_errors
     async def link_social(
         self,
@@ -299,7 +307,10 @@ class SocialAuthService:
     # ------------------------------------------------------------------
     # Открепление соцсети
     # ------------------------------------------------------------------
-
+    @traced(
+        name="SocialAuthService.unlink_social",
+        allow_fields={"user_id", "provider_name"},
+    )
     @handle_storage_errors
     async def unlink_social(self, user_id: UUID, provider_name: str) -> None:
         user = await self._users.get_by_id(user_id)
@@ -325,7 +336,10 @@ class SocialAuthService:
     # ------------------------------------------------------------------
     # Ручное объединение аккаунтов
     # ------------------------------------------------------------------
-
+    @traced(
+        name="SocialAuthService.merge_accounts",
+        allow_fields={"provider_name", "user_id"},
+    )
     @handle_storage_errors
     async def merge_accounts(
         self,
@@ -401,7 +415,10 @@ class SocialAuthService:
     # ------------------------------------------------------------------
     # Список привязанных соцсетей
     # ------------------------------------------------------------------
-
+    @traced(
+        name="SocialAuthService.get_linked_accounts",
+        allow_fields={"user_id"},
+    )
     @handle_storage_errors
     async def get_linked_accounts(self, user_id: UUID) -> list[SocialAccountPublic]:
         links = await self._social.get_links_by_user(user_id)

@@ -45,7 +45,7 @@ from services.custom_exception import (
 )
 from services.exception_handler import handle_storage_errors
 from services.rbac import RBACService
-from core.tracing_decorators import trace_class
+from core.tracing_decorators import traced
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,6 @@ return 1
 """
 
 
-@trace_class
 class AuthService:
     """Бизнес-логика аутентификации."""
 
@@ -158,7 +157,7 @@ class AuthService:
     # ------------------------------------------------------------------
     # Signup
     # ------------------------------------------------------------------
-
+    @traced(name="AuthService.signup", allow_fields={"first_name", "last_name"})
     @handle_storage_errors
     async def signup(self, data: UserCreate) -> UserPublic:
         if await self._users.get_by_login(data.login):
@@ -189,7 +188,7 @@ class AuthService:
     # ------------------------------------------------------------------
     # Login
     # ------------------------------------------------------------------
-
+    @traced(name="AuthService.login", allow_fields=set(),)
     @handle_storage_errors
     async def login(self, data: UserLogin, ip: str | None, ua: str | None) -> TokenPair:
         user = await self._users.get_by_login(data.login)
@@ -234,7 +233,7 @@ class AuthService:
     # ------------------------------------------------------------------
     # Refresh
     # ------------------------------------------------------------------
-
+    @traced(name="AuthService.refresh", allow_fields=set())
     @handle_storage_errors
     async def refresh(self, refresh_token_str: str) -> TokenPair:
         try:
@@ -284,7 +283,7 @@ class AuthService:
     # ------------------------------------------------------------------
     # Logout
     # ------------------------------------------------------------------
-
+    @traced(name="AuthService.logout", allow_fields=set(),)
     @handle_storage_errors
     async def logout(self, access_payload: dict) -> None:
         jti = access_payload['jti']
@@ -302,7 +301,7 @@ class AuthService:
     # ------------------------------------------------------------------
     # Me
     # ------------------------------------------------------------------
-
+    @traced(name="AuthService.get_me", allow_fields=set(),)
     @handle_storage_errors
     async def get_me(self, user_id: UUID) -> UserPublic:
         user = await self._users.get_by_id(user_id)
@@ -313,7 +312,7 @@ class AuthService:
     # ------------------------------------------------------------------
     # Update profile  ← ГЛАВНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ
     # ------------------------------------------------------------------
-
+    @traced(name="AuthService.update_profile", allow_fields={"login", "first_name", "last_name"},)
     @handle_storage_errors
     async def update_profile(
         self,
@@ -395,12 +394,13 @@ class AuthService:
     # ------------------------------------------------------------------
     # History
     # ------------------------------------------------------------------
-
+    @traced(name="AuthService.get_login_history", allow_fields=set(),)
     @handle_storage_errors
     async def get_login_history(self, user_id: UUID, limit: int = 20) -> list:
         return await self._history.get_recent_logins(user_id, limit=limit)
 
 
+@traced(name="AuthService.get_auth_service", allow_fields=set(),)
 async def get_auth_service(
     session: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
