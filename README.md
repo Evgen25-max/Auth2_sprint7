@@ -1,4 +1,4 @@
-!
+
 # Auth2 Sprint 7
 
 Проект содержит сервис аутентификации, миграции Alembic, функциональные тесты и инфраструктурные зависимости: PostgreSQL, auth-Redis и rate-limit Redis.
@@ -35,6 +35,7 @@
 cd etl
 cp .env.example .env
 nano .env
+```
 В файле примере есть поясняющие комментарии
 
 ### 2. Настройка Яндекс OAuth
@@ -67,20 +68,27 @@ YANDEX_INFO_URL=https://login.yandex.ru/info
     Реальный callback может быть у фронтенда или gateway, а не у самого auth-сервиса.
 
 ### 3. Запуск сервиса
+```bash
     cd Auth2_sprint7/etl/
     docker compose up -d
+```
     Проверка готовности
     docker compose ps
 
 ### 4. Запуск тестов
 
 Функциональные fastapi-movies
+```bash
 cd tests/functional
 docker compose --env-file ../../.env up --build --abort-on-container-exit tests
+```
 
 Функциональные auth-service
+```bash
 cd tests/auth_functional
 docker compose --env-file ../../.env -f docker-compose.auth.yml up --build --abort-on-container-exit tests
-
+```
 ### 5. Остановка сервиса
+```bash
 docker compose down
+```
